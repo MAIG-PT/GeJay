@@ -4,6 +4,7 @@ Real-time hand distance tracking using MediaPipe and OpenCV. This project calcul
 
 - **Index Finger to Thumb Distance**: Measured for each hand (left and right)
 - **Index Finger to Index Finger Distance**: Distance between index fingers of both hands
+- **Thumb to Thumb Distance**: Distance between thumbs of both hands
 - **Normalized Values**: All distances are normalized to 0-1 range based on configurable min/max values
 
 ## Project Structure
@@ -75,11 +76,15 @@ Adjust the min/max values for distance normalization:
 DISTANCE_CONFIG = {
     "index_to_index": {
         "min": 0.05,  # Minimum distance
-        "max": 1.0,   # Maximum distance
+        "max": 0.7,   # Maximum distance
     },
     "index_to_thumb": {
         "min": 0.01,  # Minimum pinch distance
-        "max": 0.3,   # Maximum spread distance
+        "max": 0.25,  # Maximum spread distance
+    },
+    "thumb_to_thumb": {
+        "min": 0.02,  # Minimum thumb-touch distance
+        "max": 0.7,   # Maximum spread distance
     },
 }
 ```
@@ -133,6 +138,7 @@ The program outputs normalized distances (0-1 range) to the console:
 Left  Index-Thumb (normalized): 0.1234
 Right Index-Thumb (normalized): 0.2567
 Index-to-Index (normalized): 0.8901
+Thumb-to-Thumb (normalized): 0.7452
 ```
 
 ## Normalization

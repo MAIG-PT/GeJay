@@ -9,15 +9,51 @@ All distances are normalized to 0-1 range based on configured min/max values.
 """
 
 import cv2
+import json
 import sys
 import argparse
+import socket
 from pathlib import Path
+from typing import Optional
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from utils import HandTracker, DistanceCalculator, Visualizer
-from config.distances_config import CAMERA_CONFIG, VISUALIZATION_CONFIG
+from config.distances_config import CAMERA_CONFIG, TCP_CONFIG, VISUALIZATION_CONFIG
+
+
+def connect_tcp_client(host: str, port: int) -> Optional[socket.socket]:
+    """Create a TCP connection to the receiver."""
+    try:
+        client = socket.create_connection((host, port), timeout=1.0)
+        client.settimeout(1.0)
+        return client
+    except OSError as exc:
+        print(f"TCP connection unavailable at {host}:{port} ({exc})")
+        return None
+
+
+def send_tcp_payload(
+    client: Optional[socket.socket], payload: dict
+) -> Optional[socket.socket]:
+    """Send one JSON payload over TCP and reconnect on failure."""
+    message = json.dumps(payload) + "\n"
+
+    if client is None:
+        client = connect_tcp_client(TCP_CONFIG["host"], TCP_CONFIG["port"])
+        if client is None:
+            return None
+
+    try:
+        client.sendall(message.encode("utf-8"))
+        return client
+    except OSError:
+        try:
+            client.close()
+        except OSError:
+            pass
+        return connect_tcp_client(TCP_CONFIG["host"], TCP_CONFIG["port"])
 
 
 def main(show_visualization: bool = True):
@@ -46,9 +82,13 @@ def main(show_visualization: bool = True):
 
     print("Starting hand distance tracker...")
     print(f"Visualization: {'ON' if show_visualization else 'OFF'}")
+    print(
+        f"TCP stream target: {TCP_CONFIG['host']}:{TCP_CONFIG['port']}"
+    )
     print("Press 'q' to quit, 'v' to toggle visualization")
 
     frame_count = 0
+    tcp_client = None
 
     try:
         while True:
@@ -127,6 +167,28 @@ def main(show_visualization: bool = True):
                 if show_visualization:
                     frame = visualizer.draw_text_info(frame, frame_data)
 
+            interhand_average = None
+            if "index_to_index_normalized" in frame_data and "thumb_to_thumb_normalized" in frame_data:
+                interhand_average = (
+                    frame_data["index_to_index_normalized"]
+                    + frame_data["thumb_to_thumb_normalized"]
+                ) / 2.0
+
+            left_thumb_index = frame_data.get("left", {}).get("index_to_thumb_normalized")
+            right_thumb_index = frame_data.get("right", {}).get("index_to_thumb_normalized")
+
+            if left_thumb_index is not None and right_thumb_index is not None:
+                thumb_index_average = (left_thumb_index + right_thumb_index) / 2.0
+            else:
+                thumb_index_average = None
+
+            tcp_payload = {
+                "frame": frame_count,
+                "interhand_average": interhand_average,
+                "thumb_index_average": thumb_index_average,
+            }
+            tcp_client = send_tcp_payload(tcp_client, tcp_payload)
+
             # Print current distances to console
             if hands_data:
                 print(f"\n--- Frame {frame_count} ---")
@@ -146,6 +208,16 @@ def main(show_visualization: bool = True):
                     print(
                         f"Thumb-to-Thumb (normalized): {frame_data['thumb_to_thumb_normalized']:.4f}"
                     )
+                print(
+                    f"Interhand average: {interhand_average:.4f}"
+                    if interhand_average is not None
+                    else "Interhand average: n/a"
+                )
+                print(
+                    f"Thumb-Index average: {thumb_index_average:.4f}"
+                    if thumb_index_average is not None
+                    else "Thumb-Index average: n/a"
+                )
 
             # Display frame if visualization is on
             if show_visualization:
@@ -168,6 +240,11 @@ def main(show_visualization: bool = True):
     finally:
         # Cleanup
         cap.release()
+        if tcp_client is not None:
+            try:
+                tcp_client.close()
+            except OSError:
+                pass
         if show_visualization:
             cv2.destroyAllWindows()
         hand_tracker.close()

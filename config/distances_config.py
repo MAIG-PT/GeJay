@@ -45,6 +45,13 @@ CAMERA_CONFIG = {
     "fps": 30,
 }
 
+# TCP settings for streaming averaged distances
+TCP_CONFIG = {
+    "host": "127.0.0.1",
+    "port": 5055,
+    "buffer_size": 4096,
+}
+
 # MediaPipe settings
 MEDIAPIPE_CONFIG = {
     "static_image_mode": False,

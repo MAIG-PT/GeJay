@@ -1,7 +1,6 @@
 """
 Configuration for hand distance measurements and normalization.
 """
-
 # Distance measurement ranges (in normalized coordinates, 0-1)
 DISTANCE_CONFIG = {
     # Distance between index fingers (both hands)
@@ -23,7 +22,6 @@ DISTANCE_CONFIG = {
         "max": 0.7,
     },
 }
-
 # Visualization settings
 VISUALIZATION_CONFIG = {
     "show_landmarks": True,
@@ -36,20 +34,28 @@ VISUALIZATION_CONFIG = {
     "text_color": (255, 255, 255),
     "text_font_scale": 0.6,
 }
-
 # Camera settings
 CAMERA_CONFIG = {
     "camera_id": 0,  # Default camera
-    "frame_width": 1280,
-    "frame_height": 720,
+    "frame_width": 640,
+    "frame_height": 480,
     "fps": 30,
 }
-
 # MediaPipe settings
+
+
 MEDIAPIPE_CONFIG = {
+    "backend": "auto",  # "solutions" (legacy only for Mediapipe 10.9), "tasks" (for more recent versions), or "auto"
+
+    # Shared
+    "max_num_hands": 2,
+    "min_hand_detection_confidence": 0.7,
+    "min_tracking_confidence": 0.5,
+
     "static_image_mode": False,
     "max_num_hands": 2,
     "model_complexity": 1,  # 0 = lite, 1 = full
-    "min_detection_confidence": 0.7,
+
     "min_tracking_confidence": 0.5,
+    "model_asset_path": "hand_landmarker.task",
 }

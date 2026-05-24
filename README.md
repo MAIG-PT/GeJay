@@ -1,7 +1,9 @@
-# Hand Distance Tracker
+# GeJay
 
-Real-time hand distance tracking using MediaPipe and OpenCV. This project calculates hand distances in real-time from a camera feed:
+Real-time hand distance tracking for music interfaceusing MediaPipe and OpenCV. 
+This project calculates hand distances in real-time from a camera feed:
 
+Mode 1
 - **Index Finger to Thumb Distance**: Measured for each hand (left and right)
 - **Index Finger to Index Finger Distance**: Distance between index fingers of both hands
 - **Thumb to Thumb Distance**: Distance between thumbs of both hands

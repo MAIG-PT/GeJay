@@ -269,7 +269,13 @@ class ModeController:
             "Four Fingers": (220, 220, 120),
             "Mini Heart": (0, 0, 255),
             "Looser": (255, 0, 0),
-            "Crossed Fingers": (100, 200, 200)
+            "Crossed Fingers": (100, 200, 200),
+            "Middle Finger": (50, 50, 50),
+            "Spock": (144,107,0),
+            "Stop": (0,140,255),
+            "Call Me": (0, 180, 180),
+            "Fancy": (180, 0, 180),
+            "Gun": (10,10, 10)
         }
 
         self.modes: Dict[str, BaseMode] = {

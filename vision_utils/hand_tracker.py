@@ -4,6 +4,7 @@ Provides high-level tracking of hands, coordinate retrieval, and gesture recogni
 such as counting fingers and detecting special hand signs (e.g., the 'cool' sign).
 """
 
+from itertools import count
 from FoxDot.lib import Buffers
 import time
 from typing import Optional, List, Tuple, Dict, Any
@@ -17,6 +18,7 @@ from config import MEDIAPIPE_CONFIG
 
 class HandTracker:
     """Tracks hand landmarks in real-time using MediaPipe HandLandmarker."""
+    counter = 0
 
     def __init__(self) -> None:
         """
@@ -328,6 +330,37 @@ class HandTracker:
             return (0.0, 0.0)
         return (v[0] / n, v[1] / n)
 
+    def _cross3(self, a, b):
+        return (
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        )
+
+    def _dot3(self, a, b):
+        return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+    def _midpoint3(self, a, b):
+        return (
+            (a[0] + b[0]) * 0.5,
+            (a[1] + b[1]) * 0.5,
+            (a[2] + b[2]) * 0.5,
+        )
+
+    def _angle3(self, a, b, c):
+        """
+        Angle ABC in degrees.
+        """
+        ba = (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+        bc = (c[0] - b[0], c[1] - b[1], c[2] - b[2])
+
+        uba = self._unit3(ba)
+        ubc = self._unit3(bc)
+
+        dot = self._dot3(uba, ubc)
+        dot = max(-1.0, min(1.0, dot))
+        return math.degrees(math.acos(dot))
+
     def _orient2d(self, a, b, c) -> float:
         return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
 
@@ -362,6 +395,95 @@ class HandTracker:
             finger_b_propos["base_point"],
             finger_b_propos["tip_point"])
 
+    def fingers_angle(self,
+    hand_data: Dict[str, Any],
+    finger_a: str,
+    finger_b: str) -> float:
+        a = self.get_finger_properties(hand_data, finger_a)
+        b = self.get_finger_properties(hand_data, finger_b)
+        ua = a["vector"]
+        ub = b["vector"]
+        dot = ua[0] * ub[0] + ua[1] * ub[1] + ua[2] * ub[2]
+        dot = max(-1.0, min(1.0, dot))
+        angle_deg = math.degrees(math.acos(dot))
+        return angle_deg
+
+
+    def finger_spacing_state(
+    self,
+    hand_data: Dict[str, Any],
+    finger_a: str,
+    finger_b: str,
+    require_open: bool = True,
+    ) -> str:
+        a = self.get_finger_properties(hand_data, finger_a)
+        b = self.get_finger_properties(hand_data, finger_b)
+
+        if require_open and (not a["open"] or not b["open"]):
+            return "joint"
+
+        if self.fingers_cross(hand_data, finger_a, finger_b):
+            return "joint"
+
+        landmarks = hand_data["landmarks_list"]
+        palm_width = self._dist(landmarks[5], landmarks[17])
+        if palm_width < 1e-6:
+            return "joint"
+
+        tip_ratio = self._dist(a["tip_point"], b["tip_point"]) / palm_width
+
+        ua = a["vector"]
+        ub = b["vector"]
+        dot = ua[0] * ub[0] + ua[1] * ub[1] + ua[2] * ub[2]
+        dot = max(-1.0, min(1.0, dot))
+        angle_deg = math.degrees(math.acos(dot))
+
+        pair = tuple(sorted((finger_a, finger_b)))
+
+        thresholds = {
+            ("index", "thumb"): {
+                "joint": {"tip_ratio_max": 1.9, "angle_deg_max": 10},
+                "spread": {"tip_ratio_min": 2.0, "angle_deg_min": 50},
+            },
+            ("index", "middle"): {
+                "joint": {"tip_ratio_max": 0.79, "angle_deg_max": 10.4},
+                "spread": {"tip_ratio_min": 0.8, "angle_deg_min": 14},
+            },
+            ("middle", "ring"): {
+                "joint": {"tip_ratio_max": 0.46, "angle_deg_max": 3.0},
+                "spread": {"tip_ratio_min": 0.68, "angle_deg_min": 10.9},
+            },
+            ("pinky", "ring"): {
+                "joint": {"tip_ratio_max": 0.8, "angle_deg_max": 8},
+                "spread": {"tip_ratio_min": 1.14, "angle_deg_min": 25.1},
+            },
+        }
+
+        default_thresholds = {
+            "joint": {"tip_ratio_max": 0.50, "angle_deg_max": 8.0},
+            "spread": {"tip_ratio_min": 0.90, "angle_deg_min": 18.0},
+        }
+
+        t = thresholds.get(pair, default_thresholds)
+
+        #print(f"fingers: {pair}, tip_ratio: {tip_ratio}, angle_deg: {angle_deg}, t: {t}")
+
+        is_joint = (
+            tip_ratio <= t["joint"]["tip_ratio_max"] and
+            angle_deg <= t["joint"]["angle_deg_max"]
+        )
+        if is_joint:
+            return "joint"
+
+        is_spread = (
+            tip_ratio >= t["spread"]["tip_ratio_min"] and
+            angle_deg >= t["spread"]["angle_deg_min"]
+        )
+        if is_spread:
+            return "spread"
+
+        return "natural"
+
     def get_finger_count(self, hand_data: Dict[str, Any]) -> int:
         """
         Count the number of extended fingers (0 to 5) on a given hand.
@@ -379,25 +501,88 @@ class HandTracker:
         landmarks = hand_data["landmarks_list"]
         count = 0
 
-        # Thumb check: Tip (4) vs Thumb MCP (2) vs Middle MCP (9)
-        # When open, the thumb is spread far away from the middle finger base MCP (9)
-        d_thumb_tip_mid = self._dist(landmarks[4], landmarks[9])
-        d_thumb_mcp_mid = self._dist(landmarks[2], landmarks[9])
-        if d_thumb_tip_mid > d_thumb_mcp_mid:
-            count += 1
+        thumb_props = self.get_finger_properties(hand_data, "thumb")
+        index_props = self.get_finger_properties(hand_data, "index")
+        middle_props = self.get_finger_properties(hand_data, "middle")
+        ring_props = self.get_finger_properties(hand_data, "ring")
+        pinky_props = self.get_finger_properties(hand_data, "pinky")
 
-        # Other 4 fingers: Tip vs PIP vs Wrist (0)
-        # Index: Tip (8), PIP (6)
-        # Middle: Tip (12), PIP (10)
-        # Ring: Tip (16), PIP (14)
-        # Pinky: Tip (20), PIP (18)
-        for tip_idx, pip_idx in [(8, 6), (12, 10), (16, 14), (20, 18)]:
-            d_tip_wrist = self._dist(landmarks[tip_idx], landmarks[0])
-            d_pip_wrist = self._dist(landmarks[pip_idx], landmarks[0])
-            if d_tip_wrist > d_pip_wrist:
-                count += 1
+        thumb_up = thumb_props["open"]
+        index_up = index_props["open"]
+        middle_up = middle_props["open"]
+        ring_up = ring_props["open"]
+        pinky_up = pinky_props["open"]
+
+        count = int(thumb_up) + int(index_up) + int(middle_up) + int(ring_up) + int(pinky_up)
 
         return count
+
+    def get_palm_properties(
+    self,
+    hand_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Palm properties dict.
+
+        Requires landmarks_list to store (x, y, z).
+        """
+        landmarks = hand_data["landmarks_list"]
+        handedness = hand_data.get("handedness", None)
+
+        # ---- Palm facing computation ----
+        wrist_pt = landmarks[0]
+        index_mcp = landmarks[5]
+        pinky_mcp = landmarks[17]
+
+        v_wrist_index = self._vec3(wrist_pt, index_mcp)
+        v_wrist_pinky = self._vec3(wrist_pt, pinky_mcp)
+
+        if handedness == "Left":
+            palm_normal = self._unit3(self._cross3(v_wrist_index, v_wrist_pinky))
+        elif handedness == "Right":
+            palm_normal = self._unit3(self._cross3(v_wrist_pinky, v_wrist_index))
+        else:
+            palm_normal = self._unit3(self._cross3(v_wrist_index, v_wrist_pinky))
+
+        # In MediaPipe-style image/world conventions, lower z generally means closer to camera.
+        # So a palm normal with negative z points more toward the camera.
+        palm_facing_camera = palm_normal[2]
+
+        min_angle = 0.5
+        return {
+            # palm facing
+            "palm_normal": palm_normal,
+            "palm_facing_camera_metric": palm_facing_camera,
+            "palm_facing_camera": palm_facing_camera > min_angle,
+            "palm_facing_away_from_camera": palm_facing_camera < -min_angle,
+            "palm_sideways": abs(palm_facing_camera) <= min_angle,
+        }
+
+    def _thumb_is_closed(self, hand_data: Dict[str, Any]) -> bool:
+        landmarks = hand_data["landmarks_list"]
+
+        thumb_tip = landmarks[4]
+        index_mcp = landmarks[5]
+        pinky_mcp = landmarks[17]
+
+        a = index_mcp
+        b = pinky_mcp
+        p = thumb_tip
+
+        ab = (b[0] - a[0], b[1] - a[1], b[2] - a[2])
+        ap = (p[0] - a[0], p[1] - a[1], p[2] - a[2])
+
+        ab_len_sq = ab[0]**2 + ab[1]**2 + ab[2]**2
+        if ab_len_sq < 1e-8:
+            return True
+
+        t = (ap[0]*ab[0] + ap[1]*ab[1] + ap[2]*ab[2]) / ab_len_sq
+
+        return -0.4 <= t <= 1.4
+
+
+    def _thumb_is_open(self, hand_data: Dict[str, Any]) -> bool:
+        return not self._thumb_is_closed(hand_data)
 
     def get_finger_properties(
     self,
@@ -435,8 +620,10 @@ class HandTracker:
         u = self._unit3(v)
 
         # Your existing open/closed logic
+        palm_facing_camera = self.get_palm_properties(hand_data)["palm_facing_camera"]
+
         if finger_name == "thumb":
-            is_open = self._dist(landmarks[4], landmarks[9]) > self._dist(landmarks[2], landmarks[9])
+            is_open = self._thumb_is_open(hand_data)
         else:
             is_open = self._dist(tip, wrist) > self._dist(pip, wrist)
 
@@ -503,22 +690,49 @@ class HandTracker:
         ring_props = self.get_finger_properties(hand_data, "ring")
         pinky_props = self.get_finger_properties(hand_data, "pinky")
 
+        palm_props = self.get_palm_properties(hand_data)
+
         thumb_up = thumb_props["open"]
         index_up = index_props["open"]
         middle_up = middle_props["open"]
         ring_up = ring_props["open"]
         pinky_up = pinky_props["open"]
 
+        thumb_index_spacing = self.finger_spacing_state(hand_data, "thumb", "index")
+        index_middle_spacing = self.finger_spacing_state(hand_data, "index", "middle") 
+        middle_ring_spacing = self.finger_spacing_state(hand_data, "middle", "ring") 
+        ring_pinky_spacing = self.finger_spacing_state(hand_data, "ring", "pinky") 
+
+        thumb_index_crossed = self.fingers_cross(hand_data, "thumb", "index") 
+        index_middle_crossed = self.fingers_cross(hand_data, "index", "middle")
+        middle_ring_crossed = self.fingers_cross(hand_data, "middle", "ring")
+        ring_pinky_crossed = self.fingers_cross(hand_data, "ring", "pinky")
+
+        # if HandTracker.counter == 20:
+        #     print("--------Hand Info----------")
+        #     print("thumb up", thumb_up)
+        #     print("index up", index_up)
+        #     print("middle up", middle_up)
+        #     print("ring up", ring_up)
+        #     print("pinky up", pinky_up)
+        #     print("thumb index spacing", thumb_index_spacing)
+        #     print("index middle spacing", index_middle_spacing)
+        #     print("middle ring spacing", middle_ring_spacing)
+        #     print("ring pinky spacing", ring_pinky_spacing)
+        #     print(palm_props)
+        #     HandTracker.counter = 0
+        # else:
+        #     HandTracker.counter += 1
 
         #print(f"-----\nthumb up: {thumb_up}, \nindex up: {index_up},\nmiddle up: {middle_up}, \nring up: {ring_up}, \npinky up: {pinky_up}")
 
         # Sum of extended fingers
         up_count = sum([thumb_up, index_up, middle_up, ring_up, pinky_up])
 
-        # 1. Thumbs Up / Thumbs Down: Thumb up, other fingers folded
-        if thumb_up and not (index_up or middle_up or ring_up or pinky_up):
+        # 1. Thumbs Up / Thumbs Down: Thumb up, other fingers folded)
+        if thumb_up and not (index_up or middle_up or ring_up or pinky_up) and self.fingers_angle(hand_data, "thumb", "index") > 40:
             # Check if thumb tip is physically above the thumb MCP (upright screen coordinates)
-            if landmarks[4][1] < landmarks[2][1]:
+            if thumb_props["pointing_up"]:
                 return "Thumbs Up"
             else:
                 return "Thumbs Down"
@@ -527,32 +741,33 @@ class HandTracker:
         if index_up and pinky_up and not middle_up and not ring_up:
             return "Rock Sign"
 
-        # 3. Cool Sign: All 5 fingers up
-        if thumb_up and pinky_up and not middle_up and not ring_up and not index_up:
+        # 3. Cool Sign: Thumb up, pinky up, ring down, index down
+        if thumb_up and pinky_up and not middle_up and not ring_up and not index_up and thumb_props["pointing_outward"] and pinky_props["pointing_inward"]:
             return "Cool Sign"
 
-        # 4. Victory: Index and Middle up, Ring and Pinky folded
-        if index_up and middle_up and not (ring_up or pinky_up) and not self.fingers_cross(hand_data, "middle", "index"):
+        # 4. Call Me Sign: Thumb up, pinky up, ring down, index down, middle down
+        if thumb_up and pinky_up and not middle_up and not ring_up and not index_up and thumb_props["pointing_up"] and pinky_props["pointing_down"]:
+            return "Call Me"
+
+        # 5. Victory: Index and Middle up, Ring and Pinky folded
+        if index_up and middle_up and not (ring_up or pinky_up or thumb_up) and not index_middle_crossed and palm_props["palm_facing_camera"] and not index_middle_spacing == "joint":
             return "Victory"
 
-        # 5. Mini heart/Finger heart: crossing index and thumb 
-        if index_up and thumb_up and self.fingers_cross(hand_data, "thumb", "index") and not (middle_up or ring_up or pinky_up):
+        # 6. Mini heart/Finger heart: crossing index and thumb 
+        if index_up and thumb_up and thumb_index_crossed and not (middle_up or ring_up or pinky_up):
             return "Mini Heart"
 
-        # 6. Fist: 0 fingers up
+        # 7. Fist: 0 fingers up
         if up_count == 0:
             return "Fist"
 
-        # 7. Open Hand: All 5 fingers up
-        if up_count == 5:
-            return "Open Hand"
-
-        # 8. Loose Point: Index up vertically, thumb inward, other fingers down
+        # 8. Looser: Index up vertically, thumb inward, other fingers down
         if index_props["open"] and \
            index_props["pointing_up"] and \
            thumb_props["open"] and \
            thumb_props["pointing_inward"] and \
-           not (middle_up or ring_up or pinky_up):
+           not (middle_up or ring_up or pinky_up) and\
+           thumb_index_spacing == "spread":
             return "Looser"
 
         # 9. Point: Only Index is up, others are down
@@ -560,10 +775,40 @@ class HandTracker:
             return "Point"
 
         # 10. Crossed Fingers: Index and Middle up, crossed
-        if index_up and middle_up and not (ring_up or pinky_up) and self.fingers_cross(hand_data, "middle", "index"):
+        if index_up and middle_up and not (ring_up or pinky_up) and index_middle_crossed:
             return "Crossed Fingers"
 
+        # 12. Middle Finger: Thumb down, pinky down, ring down, index down, middle up
+        if middle_up and not pinky_up and not ring_up and not index_up:
+            return "Middle Finger"
+
+        # 13. Fancy: Pinky up, thumb down, ring down, index down, middle down
+        if pinky_up and not thumb_up and not middle_up and not ring_up and not index_up:
+            return "Fancy"
+
+        # 14. Spock: all up but index, middle and ring are apart and close to each other 
+        if pinky_up and middle_up and ring_up and index_up and index_middle_spacing == "joint" and ring_pinky_spacing == "joint" and middle_ring_spacing == "spread" and palm_props["palm_facing_camera"]:
+            return "Spock"
+
+        # 15. Stop: all up and close to each other palm face to the camera
+        if pinky_up and thumb_up and middle_up and ring_up and index_up and index_middle_spacing == "joint" and ring_pinky_spacing == "joint" and  middle_ring_spacing == "joint" and palm_props["palm_facing_camera"]:
+            return "Stop"
+        
+        # 16. Gun:
+        if thumb_up and \
+            index_up and middle_up and not (ring_up or pinky_up) and\
+            not thumb_index_spacing == "joint" and index_middle_spacing == "joint":
+            return "Gun"
+
+        # 17. Open Hand: All 5 fingers up
+        if up_count == 5:
+            return "Open Hand"
+
         # Standard intermediate counts
+        if up_count == 1:
+            return "One Fingers"
+        if up_count == 2:
+            return "Two Fingers"
         if up_count == 3:
             return "Three Fingers"
         if up_count == 4:

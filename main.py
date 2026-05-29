@@ -15,7 +15,8 @@ import cv2
 import numpy as _numpy
 
 from vision_utils import Visualizer
-from mode_controller import ModeController
+from controllers.mode_controller import ModeController
+from controllers.song_controller import SongController
 from config import CAMERA_CONFIG
 
 # Global State Variables
@@ -26,10 +27,12 @@ update_interval: float = 0.25
 window_name: str = "Gejay - Control Music using your hands"
 
 def main(show_visualization: bool = True, 
-         song_name: str = "songs.derpy_naive") -> None:
+         song: str = "songs.derpy_naive") -> None:
     visualizer = Visualizer()
     controller = ModeController(visualizer=visualizer)
-    #song_controller = SongController(song_name=song_name)
+
+    print("Playing:", song)
+    song_controller = SongController(song_name=song)
 
     cap = cv2.VideoCapture(CAMERA_CONFIG["camera_id"], cv2.CAP_DSHOW)
     if not cap.isOpened():
@@ -59,9 +62,9 @@ def main(show_visualization: bool = True,
             frame = cv2.flip(frame, 1)
 
             controller.update(frame)
-            
+
             song_data = controller.get_song_data()
-            #song_controller.update(song_data)
+            song_controller.update(song_data)
 
             if show_visualization:
                 out = controller.render(frame.copy())
@@ -86,4 +89,17 @@ def main(show_visualization: bool = True,
         cv2.destroyAllWindows()
         print("System cleanly shut down.")
 
-main()
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Gejay - Control Music using your hands")
+    parser.add_argument("--no-viz", action="store_true", help="Disable the visual stream window")
+    parser.add_argument(
+        "--song",
+        default="songs.derpy_naive",
+        help="Dot-notation song module path to load, e.g. songs.derpy_naive",
+    )
+    args = parser.parse_args()
+
+    main(
+        show_visualization=not args.no_viz,
+        song=args.song,
+    )

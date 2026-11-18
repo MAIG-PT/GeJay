@@ -4,7 +4,6 @@ Hand tracking using MediaPipe.
 
 import cv2
 import mediapipe as mp
-from mediapipe.framework.formats import landmark_pb2
 from typing import Optional, List, Tuple
 import numpy as np
 
@@ -14,13 +13,14 @@ from config.distances_config import MEDIAPIPE_CONFIG
 class HandTracker:
     """Tracks hand landmarks using MediaPipe."""
 
-    def __init__(self):
+    def __init__(self, model_complexity: Optional[int] = None):
         """Initialize MediaPipe hand detector."""
         self.mp_hands = mp.solutions.hands
         self.hands = self.mp_hands.Hands(
             static_image_mode=MEDIAPIPE_CONFIG["static_image_mode"],
             max_num_hands=MEDIAPIPE_CONFIG["max_num_hands"],
-            model_complexity=MEDIAPIPE_CONFIG["model_complexity"],
+            model_complexity=(MEDIAPIPE_CONFIG["model_complexity"]
+                              if model_complexity is None else model_complexity),
             min_detection_confidence=MEDIAPIPE_CONFIG["min_detection_confidence"],
             min_tracking_confidence=MEDIAPIPE_CONFIG["min_tracking_confidence"],
         )
@@ -47,7 +47,11 @@ class HandTracker:
         h, w, _ = frame.shape
 
         # Process frame
-        results = self.hands.process(rgb_frame)
+        rgb_frame.flags.writeable = False
+        try:
+            results = self.hands.process(rgb_frame)
+        finally:
+            rgb_frame.flags.writeable = True
 
         hands_data = None
         if results.multi_hand_landmarks and results.multi_handedness:

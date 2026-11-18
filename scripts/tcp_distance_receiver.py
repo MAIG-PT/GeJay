@@ -1,4 +1,4 @@
-"""Simple TCP receiver for streamed hand-distance averages."""
+"""Simple TCP receiver for individual hand distances and legacy averages."""
 
 import argparse
 import json
@@ -10,6 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config.distances_config import TCP_CONFIG
+from synth.controls import DISTANCE_KEYS
 
 
 def main(host: str, port: int):
@@ -51,11 +52,12 @@ def main(host: str, port: int):
                             thumb_index_average=payload.get("thumb_index_average"),
                         )
                     )
+                    print(" ".join(f"{key}={payload.get(key)}" for key in DISTANCE_KEYS))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Receive averaged hand-distance data over TCP"
+        description="Receive individual and averaged hand-distance data over TCP"
     )
     parser.add_argument("--host", default=TCP_CONFIG["host"])
     parser.add_argument("--port", type=int, default=TCP_CONFIG["port"])

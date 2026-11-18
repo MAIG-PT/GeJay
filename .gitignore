@@ -44,6 +44,7 @@ env/
 output/
 data/
 results/
+recordings/
 
 # Videos and images
 *.mp4

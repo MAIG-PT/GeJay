@@ -40,12 +40,14 @@ VISUALIZATION_CONFIG = {
 # Camera settings
 CAMERA_CONFIG = {
     "camera_id": 0,  # Default camera
-    "frame_width": 1280,
-    "frame_height": 720,
+    "frame_width": 640,
+    "frame_height": 480,
     "fps": 30,
+    "fourcc": "MJPG",  # Avoid the USB bandwidth limit of uncompressed HD video.
+    "buffer_size": 2,  # Two driver buffers keep capture running while one is decoded.
 }
 
-# TCP settings for streaming averaged distances
+# TCP settings for streaming four distances and the two legacy averages
 TCP_CONFIG = {
     "host": "127.0.0.1",
     "port": 5055,
@@ -56,7 +58,7 @@ TCP_CONFIG = {
 MEDIAPIPE_CONFIG = {
     "static_image_mode": False,
     "max_num_hands": 2,
-    "model_complexity": 1,  # 0 = lite, 1 = full
+    "model_complexity": 0,  # 0 = lite (faster), 1 = full (more accurate)
     "min_detection_confidence": 0.7,
     "min_tracking_confidence": 0.5,
 }
